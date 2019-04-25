@@ -1,3 +1,28 @@
+FROM centos:7 as iptables-builder
+
+ENV IPTABLES_VERSION=1.6.2
+
+RUN yum install -y \
+    wget \
+    gcc \
+    bzip2 \
+    make && \
+    wget ftp://ftp.netfilter.org/pub/iptables/iptables-${IPTABLES_VERSION}.tar.bz2 && \
+    tar jxf iptables-${IPTABLES_VERSION}.tar.bz2 && \
+    cd iptables-${IPTABLES_VERSION} && \
+    ./configure \
+    --prefix=/usr \
+    --mandir=/usr/man \
+    --disable-shared \
+    --disable-devel \
+    --disable-nftables \
+    --enable-static \
+    --host=amd64 && \
+    make && \
+    cp iptables/xtables-multi /iptables
+
+
+
 FROM centos:7
 
 RUN yum install -y \
@@ -24,6 +49,9 @@ RUN rpm -ivh https://github.com/alauda/ovs/releases/download/v${OVS_VERSION}-${O
     rpm -ivh https://github.com/alauda/ovs/releases/download/v${OVS_VERSION}-${OVS_SUBVERSION}/ovn-${OVS_VERSION}-${OVS_SUBVERSION}.el7.x86_64.rpm && \
     rpm -ivh https://github.com/alauda/ovs/releases/download/v${OVS_VERSION}-${OVS_SUBVERSION}/ovn-common-${OVS_VERSION}-${OVS_SUBVERSION}.el7.x86_64.rpm && \
     rpm -ivh https://github.com/alauda/ovs/releases/download/v${OVS_VERSION}-${OVS_SUBVERSION}/ovn-host-${OVS_VERSION}-${OVS_SUBVERSION}.el7.x86_64.rpm
+
+# override the iptables with new version
+COPY --from=iptables-builder /iptables /usr/sbin/iptables
 
 COPY start-cniserver.sh /kube-ovn/start-cniserver.sh
 COPY install-cni.sh /kube-ovn/install-cni.sh

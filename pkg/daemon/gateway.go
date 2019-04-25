@@ -59,6 +59,11 @@ func (c *Controller) runGateway(stopCh <-chan struct{}) error {
 	}, localPodIPs)
 	c.ipSetsMgr.ApplyUpdates()
 
+	if c.iptablesMgr.HasRandomFully() {
+		// enable random fully to avoid the delay of dns
+		// https://tech.xing.com/a-reason-for-unexplained-connection-timeouts-on-kubernetes-docker-abd041cf7e02
+		natRule.Rule = append(natRule.Rule, "--random-fully")
+	}
 	for _, iptRule := range []util.IPTableRule{forwardAcceptRule1, forwardAcceptRule2, natRule} {
 		exists, err := c.iptablesMgr.Exists(iptRule.Table, iptRule.Chain, iptRule.Rule...)
 		if err != nil {
