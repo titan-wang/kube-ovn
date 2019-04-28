@@ -126,6 +126,21 @@ spec:
         volumeMounts:
           - mountPath: /run/openvswitch
             name: host-run-ovs
+      - name: tc-sidecar
+        image: "index.alauda.cn/alaudaorg/ovn-tc:v0.3.0"
+        imagePullPolicy: Always
+        securityContext:
+          privileged: true
+        env:
+          - name: DNS_PORT
+            value: "53"
+          - name: NET_OVERLAY_IF
+            value: genev_sys_6081
+        volumeMounts:
+          - name: xtables-lock
+            mountPath: /run/xtables.lock
+          - name: lib-tc
+            mountPath: /lib/tc
       nodeSelector:
         beta.kubernetes.io/os: "linux"
       volumes:
@@ -138,3 +153,9 @@ spec:
         - name: cni-bin
           hostPath:
             path: /opt/cni/bin
+        - name: xtables-lock
+          hostPath:
+            path: /run/xtables.lock
+        - name: lib-tc
+          hostPath:
+            path: /lib64/tc
