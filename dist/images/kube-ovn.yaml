@@ -3,7 +3,7 @@ kind: Deployment
 apiVersion: apps/v1
 metadata:
   name: kube-ovn-controller
-  namespace: kube-system
+  namespace:  kube-system
   annotations:
     kubernetes.io/description: |
       kube-ovn controller
@@ -39,14 +39,14 @@ spec:
       hostNetwork: true
       containers:
         - name: kube-ovn-controller
-          image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0-pre"
+          image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0"
           imagePullPolicy: IfNotPresent
           command:
           - /kube-ovn/start-controller.sh
           args:
           - --default-cidr=10.16.0.0/16
-          - --default-gateway=10.16.0.1
           - --node-switch-cidr=100.64.0.0/16
+          - --network-type=vlan
           env:
             - name: POD_NAME
               valueFrom:
@@ -75,14 +75,14 @@ spec:
             periodSeconds: 7
             failureThreshold: 5
       nodeSelector:
-        beta.kubernetes.io/os: "linux"
+        kubernetes.io/os: "linux"
 
 ---
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: kube-ovn-cni
-  namespace: kube-system
+  namespace:  kube-system
   annotations:
     kubernetes.io/description: |
       This daemon set launches the kube-ovn cni daemon.
@@ -108,7 +108,7 @@ spec:
       hostPID: true
       initContainers:
       - name: install-cni
-        image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0-pre"
+        image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0"
         imagePullPolicy: IfNotPresent
         command: ["/kube-ovn/install-cni.sh"]
         securityContext:
@@ -121,13 +121,16 @@ spec:
             name: cni-bin
       containers:
       - name: cni-server
-        image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0-pre"
+        image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0"
         imagePullPolicy: IfNotPresent
         command:
           - sh
           - /kube-ovn/start-cniserver.sh
         args:
           - --enable-mirror=true
+          - --encap-checksum=true
+          - --service-cluster-ip-range=10.96.0.0/12
+          - --iface=
         securityContext:
           capabilities:
             add: ["NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE"]
@@ -169,7 +172,7 @@ spec:
           periodSeconds: 7
           failureThreshold: 5
       nodeSelector:
-        beta.kubernetes.io/os: "linux"
+        kubernetes.io/os: "linux"
       volumes:
         - name: host-run-ovs
           hostPath:
@@ -192,7 +195,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: kube-ovn-pinger
-  namespace: kube-system
+  namespace:  kube-system
   annotations:
     kubernetes.io/description: |
       This daemon set launches the openvswitch daemon.
@@ -216,7 +219,7 @@ spec:
       hostPID: true
       containers:
         - name: pinger
-          image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0-pre"
+          image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0"
           command: ["/kube-ovn/kube-ovn-pinger", "--external-address=114.114.114.114"]
           imagePullPolicy: IfNotPresent
           securityContext:
@@ -266,7 +269,7 @@ spec:
               cpu: 200m
               memory: 400Mi
       nodeSelector:
-        beta.kubernetes.io/os: "linux"
+        kubernetes.io/os: "linux"
       volumes:
         - name: host-modules
           hostPath:
@@ -294,7 +297,7 @@ kind: Service
 apiVersion: v1
 metadata:
   name: kube-ovn-pinger
-  namespace: kube-system
+  namespace:  kube-system
   labels:
     app: kube-ovn-pinger
 spec:
@@ -308,7 +311,7 @@ kind: Service
 apiVersion: v1
 metadata:
   name: kube-ovn-controller
-  namespace: kube-system
+  namespace:  kube-system
   labels:
     app: kube-ovn-controller
 spec:
@@ -322,7 +325,7 @@ kind: Service
 apiVersion: v1
 metadata:
   name: kube-ovn-cni
-  namespace: kube-system
+  namespace:  kube-system
   labels:
     app: kube-ovn-cni
 spec:

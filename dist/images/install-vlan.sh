@@ -2,14 +2,13 @@
 set -euo pipefail
 
 REGISTRY="index.alauda.cn/alaudak8s"
+NAMESPACE="kube-system"                # The ns to deploy kube-ovn
 POD_CIDR="10.16.0.0/16"                # Do NOT overlap with NODE/SVC/JOIN CIDR
 SVC_CIDR="10.96.0.0/12"                # Do NOT overlap with NODE/POD/JOIN CIDR
 JOIN_CIDR="100.64.0.0/16"              # Do NOT overlap with NODE/POD/SVC CIDR
 LABEL="node-role.kubernetes.io/master" # The node label to deploy OVN DB
-
 IFACE=""                               # The nic to support container network, if empty will use the nic that the default route use
-VERSION="v1.2.0-pre"
-
+VERSION="v1.1.0"
 
 echo "[Step 1] Label kube-ovn-master node"
 count=$(kubectl get no -l$LABEL --no-headers -o wide | wc -l | sed 's/ //g')
@@ -17,6 +16,7 @@ if [ "$count" = "0" ]; then
   echo "ERROR: No node with label $LABEL"
   exit 1
 fi
+kubectl label no -lbeta.kubernetes.io/os=linux kubernetes.io/os=linux --overwrite
 kubectl label no -l$LABEL kube-ovn/role=master --overwrite
 echo "-------------------------------"
 echo ""
@@ -108,6 +108,65 @@ spec:
               type: "string"
             gateway:
               type: "string"
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: vlans.kubeovn.io
+spec:
+  group: kubeovn.io
+  version: v1
+  scope: Cluster
+  names:
+    plural: vlans
+    singular: vlan
+    kind: Vlan
+    shortNames:
+      - vlan
+  additionalPrinterColumns:
+    - name: VlanID
+      type: string
+      JSONPath: .spec.vlanId
+    - name: ProviderInterfaceName
+      type: string
+      JSONPath: .spec.providerInterfaceName
+    - name: Subnet
+      type: string
+      JSONPath: .spec.subnet
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: networks.kubeovn.io
+spec:
+  group: kubeovn.io
+  version: v1
+  scope: Cluster
+  names:
+    plural: networks
+    singular: network
+    kind: Network
+    shortNames:
+      - network
+  additionalPrinterColumns:
+    - name: NetworkType
+      type: string
+      JSONPath: .spec.networkType
+    - name: DefaultSubnet
+      type: string
+      JSONPath: .spec.defaultSubnet
+    - name: NodeSubnet
+      type: string
+      JSONPath: .spec.nodeSubnet
+    - name: MasterNode
+      type: string
+      JSONPath: .spec.masterNode
+    - name: PprofPort
+      type: integer
+      JSONPath: .spec.pprofPort
+    - name: ProviderName
+      type: string
+      JSONPath: .spec.providerName
 EOF
 
 cat <<EOF > ovn.yaml
@@ -115,14 +174,14 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ovn-config
-  namespace: kube-system
+  namespace: ${NAMESPACE}
 
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: ovn
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -138,6 +197,8 @@ rules:
       - subnets
       - subnets/status
       - ips
+      - vlans
+      - networks
     verbs:
       - "*"
   - apiGroups:
@@ -189,14 +250,14 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: ovn
-    namespace: kube-system
+    namespace:  ${NAMESPACE}
 
 ---
 kind: Service
 apiVersion: v1
 metadata:
   name: ovn-nb
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
 spec:
   ports:
     - name: ovn-nb
@@ -214,7 +275,7 @@ kind: Service
 apiVersion: v1
 metadata:
   name: ovn-sb
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
 spec:
   ports:
     - name: ovn-sb
@@ -232,7 +293,7 @@ kind: Deployment
 apiVersion: apps/v1
 metadata:
   name: ovn-central
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
   annotations:
     kubernetes.io/description: |
       OVN components: northd, nb and sb.
@@ -303,6 +364,8 @@ spec:
               readOnly: true
             - mountPath: /etc/openvswitch
               name: host-config-openvswitch
+            - mountPath: /etc/ovn
+              name: host-config-ovn
             - mountPath: /var/log/openvswitch
               name: host-log-ovs
             - mountPath: /var/log/ovn
@@ -337,6 +400,9 @@ spec:
         - name: host-config-openvswitch
           hostPath:
             path: /etc/origin/openvswitch
+        - name: host-config-ovn
+          hostPath:
+            path: /etc/origin/ovn
         - name: host-log-ovs
           hostPath:
             path: /var/log/openvswitch
@@ -349,7 +415,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: ovs-ovn
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
   annotations:
     kubernetes.io/description: |
       This daemon set launches the openvswitch daemon.
@@ -452,7 +518,7 @@ EOF
 
 kubectl apply -f kube-ovn-crd.yaml
 kubectl apply -f ovn.yaml
-kubectl rollout status deployment/ovn-central -n kube-system
+kubectl rollout status deployment/ovn-central -n ${NAMESPACE}
 echo "-------------------------------"
 echo ""
 
@@ -464,7 +530,7 @@ kind: Deployment
 apiVersion: apps/v1
 metadata:
   name: kube-ovn-controller
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
   annotations:
     kubernetes.io/description: |
       kube-ovn controller
@@ -507,6 +573,7 @@ spec:
           args:
           - --default-cidr=$POD_CIDR
           - --node-switch-cidr=$JOIN_CIDR
+          - --network-type=vlan
           env:
             - name: POD_NAME
               valueFrom:
@@ -542,7 +609,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: kube-ovn-cni
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
   annotations:
     kubernetes.io/description: |
       This daemon set launches the kube-ovn cni daemon.
@@ -588,7 +655,9 @@ spec:
           - /kube-ovn/start-cniserver.sh
         args:
           - --enable-mirror=true
+          - --encap-checksum=true
           - --service-cluster-ip-range=$SVC_CIDR
+          - --iface=${IFACE}
         securityContext:
           capabilities:
             add: ["NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE"]
@@ -653,7 +722,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: kube-ovn-pinger
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
   annotations:
     kubernetes.io/description: |
       This daemon set launches the openvswitch daemon.
@@ -755,7 +824,7 @@ kind: Service
 apiVersion: v1
 metadata:
   name: kube-ovn-pinger
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
   labels:
     app: kube-ovn-pinger
 spec:
@@ -769,7 +838,7 @@ kind: Service
 apiVersion: v1
 metadata:
   name: kube-ovn-controller
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
   labels:
     app: kube-ovn-controller
 spec:
@@ -783,7 +852,7 @@ kind: Service
 apiVersion: v1
 metadata:
   name: kube-ovn-cni
-  namespace: kube-system
+  namespace:  ${NAMESPACE}
   labels:
     app: kube-ovn-cni
 spec:
@@ -795,7 +864,7 @@ spec:
 EOF
 
 kubectl apply -f kube-ovn.yaml
-kubectl rollout status deployment/kube-ovn-controller -n kube-system
+kubectl rollout status deployment/kube-ovn-controller -n ${NAMESPACE}
 echo "-------------------------------"
 echo ""
 
@@ -806,7 +875,7 @@ for ns in $(kubectl get ns --no-headers -o  custom-columns=NAME:.metadata.name);
   done
 done
 
-kubectl rollout status daemonset/kube-ovn-pinger -n kube-system
+kubectl rollout status daemonset/kube-ovn-pinger -n ${NAMESPACE}
 kubectl rollout status deployment/coredns -n kube-system
 echo "-------------------------------"
 echo ""
@@ -855,7 +924,6 @@ tcpdump(){
      echo "pod mac address not ready"
      exit 1
   fi
-  mac=$(echo "$mac" | tr '[:upper:]' '[:lower:]')
 
   ovnCni=$(kubectl get pod -n $KUBE_OVN_NS -o wide| grep kube-ovn-cni| grep " $nodeName " | awk '{print $1}')
   if [ -z "$ovnCni" ]; then
@@ -946,8 +1014,6 @@ vsctl(){
 diagnose(){
   kubectl get crd subnets.kubeovn.io
   kubectl get crd ips.kubeovn.io
-  kubectl get svc kube-dns -n kube-system
-  kubectl get svc kubernetes -n default
 
   checkDaemonSet kube-proxy
   checkDeployment ovn-central

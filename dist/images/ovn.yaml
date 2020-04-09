@@ -1,4 +1,3 @@
----
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,7 +9,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: ovn
-  namespace: kube-system
+  namespace:  kube-system
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -26,6 +25,8 @@ rules:
       - subnets
       - subnets/status
       - ips
+      - vlans
+      - networks
     verbs:
       - "*"
   - apiGroups:
@@ -77,14 +78,14 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: ovn
-    namespace: kube-system
+    namespace:  kube-system
 
 ---
 kind: Service
 apiVersion: v1
 metadata:
   name: ovn-nb
-  namespace: kube-system
+  namespace:  kube-system
 spec:
   ports:
     - name: ovn-nb
@@ -102,7 +103,7 @@ kind: Service
 apiVersion: v1
 metadata:
   name: ovn-sb
-  namespace: kube-system
+  namespace:  kube-system
 spec:
   ports:
     - name: ovn-sb
@@ -120,7 +121,7 @@ kind: Deployment
 apiVersion: apps/v1
 metadata:
   name: ovn-central
-  namespace: kube-system
+  namespace:  kube-system
   annotations:
     kubernetes.io/description: |
       OVN components: northd, nb and sb.
@@ -156,13 +157,15 @@ spec:
       hostNetwork: true
       containers:
         - name: ovn-central
-          image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0-pre"
+          image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0"
           imagePullPolicy: IfNotPresent
           command: ["/kube-ovn/start-db.sh"]
           securityContext:
             capabilities:
               add: ["SYS_NICE"]
           env:
+            - name: NODE_IPS
+              value: 192.168.55.100,
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -189,6 +192,8 @@ spec:
               readOnly: true
             - mountPath: /etc/openvswitch
               name: host-config-openvswitch
+            - mountPath: /etc/ovn
+              name: host-config-ovn
             - mountPath: /var/log/openvswitch
               name: host-log-ovs
             - mountPath: /var/log/ovn
@@ -202,13 +207,13 @@ spec:
           livenessProbe:
             exec:
               command:
-              - sh
-              - /kube-ovn/ovn-healthcheck.sh
+                - sh
+                - /kube-ovn/ovn-healthcheck.sh
             initialDelaySeconds: 30
             periodSeconds: 7
             failureThreshold: 5
       nodeSelector:
-        beta.kubernetes.io/os: "linux"
+        kubernetes.io/os: "linux"
         kube-ovn/role: "master"
       volumes:
         - name: host-run-ovs
@@ -223,6 +228,9 @@ spec:
         - name: host-config-openvswitch
           hostPath:
             path: /etc/origin/openvswitch
+        - name: host-config-ovn
+          hostPath:
+            path: /etc/origin/ovn
         - name: host-log-ovs
           hostPath:
             path: /var/log/openvswitch
@@ -235,7 +243,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: ovs-ovn
-  namespace: kube-system
+  namespace:  kube-system
   annotations:
     kubernetes.io/description: |
       This daemon set launches the openvswitch daemon.
@@ -261,7 +269,7 @@ spec:
       hostPID: true
       containers:
         - name: openvswitch
-          image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0-pre"
+          image: "index.alauda.cn/alaudak8s/kube-ovn:v1.1.0"
           imagePullPolicy: IfNotPresent
           command: ["/kube-ovn/start-ovs.sh"]
           securityContext:
@@ -292,14 +300,14 @@ spec:
           readinessProbe:
             exec:
               command:
-              - sh
-              - /kube-ovn/ovs-healthcheck.sh
+                - sh
+                - /kube-ovn/ovs-healthcheck.sh
             periodSeconds: 5
           livenessProbe:
             exec:
               command:
-              - sh
-              - /kube-ovn/ovs-healthcheck.sh
+                - sh
+                - /kube-ovn/ovs-healthcheck.sh
             initialDelaySeconds: 10
             periodSeconds: 5
             failureThreshold: 5
@@ -311,7 +319,7 @@ spec:
               cpu: 1000m
               memory: 800Mi
       nodeSelector:
-        beta.kubernetes.io/os: "linux"
+        kubernetes.io/os: "linux"
       volumes:
         - name: host-modules
           hostPath:
